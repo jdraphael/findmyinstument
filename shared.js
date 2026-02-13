@@ -5,6 +5,8 @@
   lastFamily: "fmi-last-family",
   largeText: "fmi-large-text",
   voice: "fmi-voice",
+  favorites: "fmi-favorites",
+  theme: "fmi-theme",
 };
 
 const memoryStore = {};
@@ -58,6 +60,22 @@ function setLastFamily(family) {
   storage.setItem(STORAGE_KEYS.lastFamily, family);
 }
 
+function getFavorites() {
+  return readJson(STORAGE_KEYS.favorites, []);
+}
+
+function toggleFavorite(instrumentId) {
+  const favorites = new Set(getFavorites());
+  if (favorites.has(instrumentId)) {
+    favorites.delete(instrumentId);
+  } else {
+    favorites.add(instrumentId);
+  }
+  const list = Array.from(favorites);
+  writeJson(STORAGE_KEYS.favorites, list);
+  return list;
+}
+
 function readJson(key, fallback) {
   const stored = storage.getItem(key);
   if (!stored) return fallback;
@@ -70,6 +88,23 @@ function readJson(key, fallback) {
 
 function writeJson(key, value) {
   storage.setItem(key, JSON.stringify(value));
+}
+
+function setTheme(theme) {
+  storage.setItem(STORAGE_KEYS.theme, theme);
+  applyTheme();
+}
+
+function getTheme() {
+  return storage.getItem(STORAGE_KEYS.theme) || "female";
+}
+
+function applyTheme() {
+  const theme = getTheme();
+  document.body.classList.remove("theme-male");
+  if (theme === "male") {
+    document.body.classList.add("theme-male");
+  }
 }
 
 function redirectOnReload() {
@@ -173,6 +208,49 @@ function initMusicLauncher() {
   });
 }
 
+function initMaybeLaterModal() {
+  if (document.querySelector(".modal-overlay")) return;
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <h3>Leave app or change my mind?</h3>
+      <p>You can keep exploring or leave for now.</p>
+      <div class="modal-actions">
+        <button class="modal-leave" type="button">Leave app</button>
+        <button class="modal-stay" type="button">Change my mind</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) overlay.classList.remove("show");
+  });
+
+  overlay.querySelector(".modal-leave").addEventListener("click", () => {
+    overlay.classList.remove("show");
+    window.location.href = "index.html";
+  });
+
+  overlay.querySelector(".modal-stay").addEventListener("click", () => {
+    overlay.classList.remove("show");
+  });
+
+  document.querySelectorAll(".maybe-later-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      overlay.classList.add("show");
+    });
+  });
+
+  document.querySelectorAll(".uiverse-desactivate").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      window.location.href = "badges.html";
+    });
+  });
+}
+
 function calculateScores(answers) {
   const scores = {};
 
@@ -262,6 +340,21 @@ function pickVoice(voices, preference) {
   return match || voices[0];
 }
 
+function getBadges(answers) {
+  const badges = [];
+  if (answers.role === "rhythm" || answers.energy === "high") {
+    badges.push("Rhythm Hero");
+  }
+  if (answers.style === "classical" || answers.style === "film") {
+    badges.push("Tone Explorer");
+  }
+  if (answers.practice === "creative" || answers.style === "jazz") {
+    badges.push("Improv Spark");
+  }
+  if (!badges.length) badges.push("Sound Seeker");
+  return badges;
+}
+
 function speakQuestion(question) {
   if (!("speechSynthesis" in window)) return;
   const utterance = new SpeechSynthesisUtterance();
@@ -320,6 +413,14 @@ function renderSheetCards(list, songs, headerText) {
     `
     )
     .join("");
+}
+
+function getAudioContext() {
+  if (window.fmiAudioCtx) return window.fmiAudioCtx;
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return null;
+  window.fmiAudioCtx = new AudioCtx();
+  return window.fmiAudioCtx;
 }
 
 

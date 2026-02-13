@@ -3,42 +3,42 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Find My Instrument</title>
+  <title>Find My Instrument · Badges</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
-<body class="view-intro">
+<body class="view-results view-badges">
   <div class="page">
     <header class="hero">
       <div>
         <nav class="top-nav">
-          <a href="index.html" class="nav-link active">Home</a>
+          <a href="index.html" class="nav-link">Home</a>
           <a href="survey.html" class="nav-link">Questions</a>
           <a href="results.html" class="nav-link">Results</a>
           <a href="songs.html" class="nav-link">Sheet Music</a>
-          <a href="badges.html" class="nav-link">Badges</a>
+          <a href="badges.html" class="nav-link active">Badges</a>
         </nav>
         <p class="eyebrow">Discover your sound</p>
         <h1>Find My Instrument</h1>
-        <p class="subhead">Answer a few quick questions. We'll match you with instruments that fit your vibe, goals, and style.</p>
+        <p class="subhead">Collect badges as you explore different instruments and styles.</p>
         <div class="access-controls">
           <button class="toggle-btn" id="text-toggle" type="button">Bigger text: Off</button>
         </div>
       </div>
       <div class="hero-card">
         <div class="hero-stat">
+          <span>10+</span>
+          <p>Badges to collect</p>
+        </div>
+        <div class="hero-stat">
           <span>4</span>
-          <p>Families of instruments</p>
+          <p>Families to explore</p>
         </div>
         <div class="hero-stat">
-          <span>20+</span>
-          <p>Options to explore</p>
-        </div>
-        <div class="hero-stat">
-          <span>5-8</span>
-          <p>Questions to get matched</p>
+          <span>1</span>
+          <p>Your journey</p>
         </div>
       </div>
     </header>
@@ -46,6 +46,7 @@
     <main>
       <section class="card" id="screen"></section>
     </main>
+
     <section class="uiverse-card">
       <div class="uiverse-header">
         <div class="uiverse-image" aria-hidden="true">
@@ -54,12 +55,12 @@
           </svg>
         </div>
         <div class="uiverse-content">
-          <span class="uiverse-title">Nice work!</span>
-          <p class="uiverse-message">You're building your instrument journey. Keep going!</p>
+          <span class="uiverse-title">Keep collecting!</span>
+          <p class="uiverse-message">Try a new style to unlock more badges.</p>
         </div>
       </div>
       <div class="uiverse-actions">
-        <button class="uiverse-desactivate" type="button">Keep exploring</button>
+        <button class="uiverse-desactivate" type="button">Explore more</button>
         <button class="uiverse-cancel maybe-later-btn" type="button">Maybe later</button>
       </div>
     </section>
@@ -71,7 +72,7 @@
 
   <script src="data.js"></script>
   <script src="shared.js"></script>
-  <script src="intro.js"></script>
+  <script src="badges-data.js"></script>
+  <script src="badges.js"></script>
 </body>
 </html>
-

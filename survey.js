@@ -1,21 +1,34 @@
 ﻿document.addEventListener("DOMContentLoaded", () => {
   initAccessibility();
   initMusicLauncher();
+  initMaybeLaterModal();
+  applyTheme();
 
   const screen = document.getElementById("screen");
 
   function renderQuestion() {
     let step = getStep();
+    if (step >= QUESTIONS.length) {
+      window.location.href = "results.html";
+      return;
+    }
     const question = QUESTIONS[step];
     if (!question) {
       window.location.href = "results.html";
       return;
     }
+    const progress = Math.round(((step + 1) / QUESTIONS.length) * 100);
 
     const canSpeak = "speechSynthesis" in window;
     const voicePref = getVoicePreference();
 
     screen.innerHTML = `
+      <div class="progress-wrap">
+        <div class="progress-label">Progress: ${progress}%</div>
+        <div class="progress-bar">
+          <div class="progress-fill" style="width: ${progress}%"></div>
+        </div>
+      </div>
       <div class="question-header">
         <h2 class="screen-title">${question.title}</h2>
         ${

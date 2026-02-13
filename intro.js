@@ -1,17 +1,27 @@
 ﻿document.addEventListener("DOMContentLoaded", () => {
   initAccessibility();
   initMusicLauncher();
+  initMaybeLaterModal();
 
   const screen = document.getElementById("screen");
   const profile = getProfile();
+  if (profile.gender) {
+    setTheme(profile.gender === "male" ? "male" : "female");
+  } else {
+    applyTheme();
+  }
 
   screen.innerHTML = `
     <h2 class="screen-title">Let's get your match</h2>
     <p class="screen-subtitle">Start with a few basics so we can personalize your path.</p>
     <div class="form-grid">
       <div>
-        <label for="name">Your name</label>
-        <input id="name" placeholder="Jordan" value="${profile.name || ""}" />
+        <label for="gender">Gender</label>
+        <select id="gender">
+          <option value="">Select one</option>
+          <option value="female">Female</option>
+          <option value="male">Male</option>
+        </select>
       </div>
       <div>
         <label for="age">Age range</label>
@@ -30,25 +40,30 @@
     </div>
   `;
 
+  if (profile.gender) {
+    screen.querySelector("#gender").value = profile.gender;
+  }
   if (profile.ageRange) {
     screen.querySelector("#age").value = profile.ageRange;
   }
 
   screen.querySelector("#start").addEventListener("click", () => {
-    const name = screen.querySelector("#name").value.trim();
+    const gender = screen.querySelector("#gender").value;
     const ageRange = screen.querySelector("#age").value;
-    if (!ageRange) {
-      alert("Please select an age range.");
+    if (!gender || !ageRange) {
+      alert("Please select a gender and age range.");
       return;
     }
-    setProfile({ name, ageRange });
+    setTheme(gender === "male" ? "male" : "female");
+    setProfile({ gender, ageRange });
     setStep(0);
     setAnswers({});
     window.location.href = "survey.html";
   });
 
   screen.querySelector("#guest").addEventListener("click", () => {
-    setProfile({ name: "", ageRange: "" });
+    setTheme("female");
+    setProfile({ gender: "", ageRange: "" });
     setStep(0);
     setAnswers({});
     window.location.href = "survey.html";

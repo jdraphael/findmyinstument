@@ -17,9 +17,15 @@ const FAMILY_INDEX = {
   Mix: 0,
   Surprise: 0,
 };
+
+let noteElements = [];
+let lastActiveNoteIndex = -1;
+
 document.addEventListener("DOMContentLoaded", () => {
   initAccessibility();
   initMusicLauncher();
+  initMaybeLaterModal();
+  applyTheme();
 
   const screen = document.getElementById("screen");
   const lastFamily = getLastFamily();
@@ -94,10 +100,16 @@ screen.innerHTML = `
       </div>
       <div class="musicxml-actions">
         <button class="primary" id="generate-music">Generate Sheet Music</button>
-        <button class="secondary" id="play-music" disabled>Play</button>
+        <div class="music-controls" role="group" aria-label="Playback controls">
+          <button class="icon-button" id="play-music" type="button" aria-label="Play" title="Play" disabled>▶</button>
+          <button class="icon-button" id="pause-music" type="button" aria-label="Pause" title="Pause" disabled>❚❚</button>
+          <button class="icon-button" id="stop-music" type="button" aria-label="Start over" title="Start over" disabled>■</button>
+          <button class="icon-button" id="loop-music" type="button" aria-label="Loop" title="Loop" aria-pressed="false">⟲</button>
+        </div>
         <button class="secondary" id="download-music" disabled>Download MusicXML</button>
       </div>
       <div class="osmd-container" id="osmd-container"></div>
+      <div class="note-strip" id="note-strip"></div>
     </div>
     <div class="sheet-list" id="sheet-list" hidden></div>
   `;
@@ -110,8 +122,31 @@ screen.innerHTML = `
   const tempoValue = screen.querySelector("#tempo-value");
   const generateButton = screen.querySelector("#generate-music");
   const playButton = screen.querySelector("#play-music");
+  const pauseButton = screen.querySelector("#pause-music");
+  const stopButton = screen.querySelector("#stop-music");
+  const loopButton = screen.querySelector("#loop-music");
   const downloadButton = screen.querySelector("#download-music");
   const osmdContainer = screen.querySelector("#osmd-container");
+  const noteStrip = screen.querySelector("#note-strip");
+  const noteButtons = Array.from(screen.querySelectorAll(".note-buttons button"));
+  const notePopup = createNotePopup(osmdContainer);
+  let activeOscillators = [];
+  let activeTimeouts = [];
+  let stopTimer = null;
+  let playbackPlan = null;
+  let playbackOffsetSec = 0;
+  let playbackStartMs = 0;
+  let isPlaying = false;
+  let isPaused = false;
+  let loopEnabled = false;
+
+  const setActiveFamilyButton = (family) => {
+    noteButtons.forEach((btn) => {
+      const isMatch = btn.getAttribute("data-family") === family;
+      btn.classList.toggle("is-active", isMatch);
+      btn.setAttribute("aria-pressed", isMatch ? "true" : "false");
+    });
+  };
 
   const renderDefault = () => {
     // No default song list on this page.
@@ -119,10 +154,12 @@ screen.innerHTML = `
   };
 
   familySelect.value = resolveFamily(input.value || lastFamily);
+  setActiveFamilyButton(familySelect.value);
   familySelect.addEventListener("change", () => {
     const family = familySelect.value;
     input.value = family;
     currentInstrument = family;
+    setActiveFamilyButton(family);
   });
 
   screen.querySelector("#show-songs").addEventListener("click", () => {
@@ -135,13 +172,14 @@ screen.innerHTML = `
     window.location.href = "results.html";
   });
 
-  screen.querySelectorAll(".note-buttons button").forEach((btn) => {
+  noteButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
       const family = btn.getAttribute("data-family");
       const count = Math.max(1, Math.min(20, Number(countInput.value || 5)));
       input.value = family;
       currentInstrument = family;
       familySelect.value = family;
+      setActiveFamilyButton(family);
       // Song list removed from this page.
     });
   });
@@ -157,9 +195,18 @@ screen.innerHTML = `
     const style = screen.querySelector("#style").value;
     const tempoValue = Number(tempo.value);
     currentXML = generateMusicXML({ instrument, difficulty, style, tempo: tempoValue });
-    renderMusicXML(currentXML, osmdContainer);
+    const stripElements = renderNoteStrip(currentXML, noteStrip);
+    noteElements = stripElements;
+    renderMusicXML(currentXML, osmdContainer)
+      .then((elements) => {
+        noteElements = elements.length ? elements : stripElements;
+      });
+    playbackPlan = null;
+    playbackOffsetSec = 0;
     downloadButton.disabled = false;
     playButton.disabled = false;
+    stopButton.disabled = true;
+    pauseButton.disabled = true;
   });
 
   downloadButton.addEventListener("click", () => {
@@ -167,10 +214,106 @@ screen.innerHTML = `
     downloadMusicXML(currentXML, "find-my-instrument.xml");
   });
 
+  const stopPlayback = () => {
+    activeTimeouts.forEach((id) => clearTimeout(id));
+    activeTimeouts = [];
+    activeOscillators.forEach((osc) => {
+      try {
+        osc.stop();
+      } catch (e) {
+        // Ignore stop errors for completed oscillators.
+      }
+    });
+    activeOscillators = [];
+    if (stopTimer) {
+      clearTimeout(stopTimer);
+      stopTimer = null;
+    }
+    clearActiveNote();
+    hideNotePopup(notePopup);
+    stopButton.disabled = true;
+    pauseButton.disabled = true;
+    playButton.disabled = !currentXML;
+  };
+
+  const updateLoopState = () => {
+    loopButton.classList.toggle("is-active", loopEnabled);
+    loopButton.setAttribute("aria-pressed", loopEnabled ? "true" : "false");
+  };
+
+  const startPlayback = (offsetSec) => {
+    if (!currentXML) return;
+    if (!playbackPlan) {
+      playbackPlan = buildPlaybackPlan(currentXML);
+    }
+    const remainingSec = Math.max(0, playbackPlan.totalDurationSec - offsetSec);
+    const visualNotes =
+      playbackPlan && noteElements.length > playbackPlan.notes.length
+        ? noteElements.slice(0, playbackPlan.notes.length)
+        : noteElements;
+    const playback = playSimpleMelody(
+      playbackPlan,
+      visualNotes,
+      notePopup,
+      osmdContainer,
+      offsetSec
+    );
+    activeOscillators = playback.oscillators;
+    activeTimeouts = playback.timeouts;
+    stopButton.disabled = false;
+    pauseButton.disabled = false;
+    playButton.disabled = true;
+    isPlaying = true;
+    isPaused = false;
+    playbackStartMs = performance.now();
+    stopTimer = setTimeout(() => {
+      stopPlayback();
+      playbackOffsetSec = 0;
+      isPlaying = false;
+      isPaused = false;
+      if (loopEnabled) {
+        startPlayback(0);
+      }
+    }, Math.ceil(remainingSec * 1000));
+  };
+
+  const pausePlayback = () => {
+    if (!isPlaying) return;
+    const elapsedSec = (performance.now() - playbackStartMs) / 1000;
+    playbackOffsetSec = Math.min(
+      playbackPlan ? playbackPlan.totalDurationSec : 0,
+      playbackOffsetSec + elapsedSec
+    );
+    stopPlayback();
+    isPlaying = false;
+    isPaused = true;
+    playButton.disabled = false;
+  };
+
   playButton.addEventListener("click", () => {
     if (!currentXML) return;
-    playSimpleMelody(currentXML);
+    stopPlayback();
+    if (isPaused && playbackOffsetSec > 0) {
+      startPlayback(playbackOffsetSec);
+      return;
+    }
+    playbackOffsetSec = 0;
+    startPlayback(0);
   });
+  pauseButton.addEventListener("click", () => {
+    pausePlayback();
+  });
+  stopButton.addEventListener("click", () => {
+    stopPlayback();
+    playbackOffsetSec = 0;
+    isPaused = false;
+    isPlaying = false;
+  });
+  loopButton.addEventListener("click", () => {
+    loopEnabled = !loopEnabled;
+    updateLoopState();
+  });
+  updateLoopState();
 
   renderDefault();
 });
@@ -226,19 +369,47 @@ function pickInstrumentFromFamily(family) {
 function renderMusicXML(xml, container) {
   if (!window.opensheetmusicdisplay) {
     container.innerHTML = "<p class=\"screen-subtitle\">Sheet music renderer failed to load.</p>";
-    return;
+    return Promise.resolve([]);
   }
   container.innerHTML = "";
+  container.style.width = "100%";
   const osmd = new window.opensheetmusicdisplay.OpenSheetMusicDisplay(container, {
     autoResize: true,
     drawTitle: false,
   });
-  osmd
-    .load(xml)
-    .then(() => osmd.render())
+  return waitForContainerSize(container)
+    .then(() => osmd.load(xml))
+    .then(() => new Promise((resolve) => requestAnimationFrame(resolve)))
+    .then(() => {
+      const containerWidth = container.getBoundingClientRect().width;
+      if (containerWidth <= 0) {
+        const parentWidth = container.parentElement
+          ? container.parentElement.getBoundingClientRect().width
+          : 0;
+        container.style.width = `${Math.max(parentWidth, 600)}px`;
+      }
+      osmd.render();
+      return getRenderedNoteElements(container);
+    })
     .catch(() => {
       container.innerHTML = "<p class=\"screen-subtitle\">Could not render the sheet music.</p>";
+      return [];
     });
+}
+
+function waitForContainerSize(container, attempts = 6) {
+  return new Promise((resolve) => {
+    const check = () => {
+      const width = container.getBoundingClientRect().width;
+      if (width > 0 || attempts <= 0) {
+        resolve(width > 0);
+        return;
+      }
+      attempts -= 1;
+      requestAnimationFrame(check);
+    };
+    check();
+  });
 }
 
 function downloadMusicXML(xml, filename) {
@@ -458,21 +629,19 @@ function buildChordNotes(chord) {
   `;
 }
 
-function playSimpleMelody(xml) {
-  const noteRegex = new RegExp("<note>[\\s\\S]*?<\\/note>", "g");
-  const notes = Array.from(xml.matchAll(noteRegex));
-  if (!notes.length) return;
+function buildPlaybackPlan(xml) {
+  const notes = parseNoteBlocks(xml);
+  if (!notes.length) return { notes: [], totalDurationSec: 0 };
   const audioCtx = getAudioContext();
-  if (!audioCtx) return;
+  if (!audioCtx) return { notes: [], totalDurationSec: 0 };
 
-  const now = audioCtx.currentTime;
   let cursor = 0;
+  const planned = [];
   const tempoMatch = xml.match(new RegExp("<per-minute>(\\d+)<\\/per-minute>"));
   const bpm = tempoMatch ? Number(tempoMatch[1]) : 96;
   const secondsPerBeat = 60 / bpm;
 
-  notes.forEach((match) => {
-    const block = match[0];
+  notes.forEach((block, idx) => {
     if (block.includes("<chord/>")) return;
     const stepMatch = block.match(new RegExp("<step>([A-G])<\\/step>"));
     const alterMatch = block.match(new RegExp("<alter>(-?\\d+)<\\/alter>"));
@@ -483,14 +652,44 @@ function playSimpleMelody(xml) {
     const alter = alterMatch ? Number(alterMatch[1]) : 0;
     const octave = Number(octaveMatch[1]);
     const duration = Number(durationMatch[1]) / 2;
-    const freq = noteFrequency(step, alter, octave);
-    const start = now + cursor;
     const length = duration * secondsPerBeat;
+    const freq = noteFrequency(step, alter, octave);
+    const accidental = alter === 1 ? "#" : alter === -1 ? "b" : "";
+    planned.push({
+      idx,
+      freq,
+      startOffset: cursor,
+      length,
+      label: `${step}${accidental}${octave}`,
+    });
+
+    cursor += length;
+  });
+  return { notes: planned, totalDurationSec: cursor, bpm };
+}
+
+function playSimpleMelody(plan, noteElements = [], notePopup, popupHost, offsetSec = 0) {
+  if (!plan || !plan.notes.length) return { oscillators: [], timeouts: [] };
+  const audioCtx = getAudioContext();
+  if (!audioCtx) return { oscillators: [], timeouts: [] };
+
+  const now = audioCtx.currentTime;
+  const oscillators = [];
+  const timeouts = [];
+
+  plan.notes.forEach((note) => {
+    const startDelay = note.startOffset - offsetSec;
+    const endOffset = note.startOffset + note.length;
+    if (endOffset <= offsetSec) return;
+
+    const start = now + Math.max(0, startDelay);
+    const length = startDelay < 0 ? note.length + startDelay : note.length;
+    if (length <= 0) return;
 
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     osc.type = "sine";
-    osc.frequency.value = freq;
+    osc.frequency.value = note.freq;
     gain.gain.setValueAtTime(0, start);
     gain.gain.linearRampToValueAtTime(0.16, start + 0.02);
     gain.gain.linearRampToValueAtTime(0, start + length);
@@ -498,9 +697,134 @@ function playSimpleMelody(xml) {
     gain.connect(audioCtx.destination);
     osc.start(start);
     osc.stop(start + length + 0.05);
+    oscillators.push(osc);
 
-    cursor += length;
+    if (noteElements[note.idx]) {
+      const startTimeout = setTimeout(() => {
+        clearActiveNote();
+        setNoteActive(noteElements[note.idx], true);
+        lastActiveNoteIndex = note.idx;
+        showNotePopup(
+          notePopup,
+          popupHost,
+          noteElements[note.idx],
+          note.label
+        );
+      }, Math.max(0, startDelay * 1000));
+      const endTimeout = setTimeout(() => {
+        setNoteActive(noteElements[note.idx], false);
+        if (lastActiveNoteIndex === note.idx) {
+          lastActiveNoteIndex = -1;
+        }
+        hideNotePopup(notePopup);
+      }, Math.max(0, (startDelay + length) * 1000));
+      timeouts.push(startTimeout, endTimeout);
+    }
   });
+  return { oscillators, timeouts };
+}
+
+function getRenderedNoteElements(container) {
+  const svg = container.querySelector("svg");
+  if (!svg) return [];
+  const noteGroups = Array.from(svg.querySelectorAll("g.vf-stavenote, g.vf-note"));
+  const heads = [];
+
+  noteGroups.forEach((group) => {
+    if (group.classList.contains("vf-rest")) return;
+    const head =
+      group.querySelector("use.vf-notehead") ||
+      group.querySelector("path.vf-notehead") ||
+      group.querySelector(".vf-notehead");
+    if (head) {
+      heads.push(head);
+      return;
+    }
+    const fallback = group.querySelector("path, use, ellipse, rect");
+    if (fallback) heads.push(fallback);
+  });
+
+  if (heads.length) return heads;
+
+  return Array.from(svg.querySelectorAll(".vf-notehead, path.vf-notehead")).filter(
+    (el) => !el.closest(".vf-rest")
+  );
+}
+
+function noteHighlightColor() {
+  return document.body.classList.contains("theme-male") ? "#25a66a" : "#ff6fb7";
+}
+
+function setNoteActive(el, isActive) {
+  if (!el) return;
+  if (isActive) {
+    el.classList.add("active");
+    const color = noteHighlightColor();
+    el.style.fill = color;
+    el.style.stroke = color;
+  } else {
+    el.classList.remove("active");
+    el.style.fill = "";
+    el.style.stroke = "";
+  }
+}
+
+function clearActiveNote() {
+  if (lastActiveNoteIndex < 0) return;
+  setNoteActive(noteElements[lastActiveNoteIndex], false);
+  lastActiveNoteIndex = -1;
+}
+
+function createNotePopup(container) {
+  if (!container) return null;
+  container.style.position = "relative";
+  const popup = document.createElement("div");
+  popup.className = "note-pop";
+  popup.setAttribute("aria-hidden", "true");
+  container.appendChild(popup);
+  return popup;
+}
+
+function showNotePopup(popup, host, target, label) {
+  if (!popup || !host || !target) return;
+  if (!host.contains(target)) return;
+  popup.textContent = label;
+  const hostRect = host.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const left = targetRect.left - hostRect.left + host.scrollLeft + targetRect.width / 2;
+  const top = targetRect.top - hostRect.top + host.scrollTop;
+  popup.style.left = `${left}px`;
+  popup.style.top = `${top}px`;
+  popup.classList.add("show");
+}
+
+function hideNotePopup(popup) {
+  if (!popup) return;
+  popup.classList.remove("show");
+}
+
+function parseNoteBlocks(xml) {
+  const noteRegex = new RegExp("<note>[\\s\\S]*?<\\/note>", "g");
+  return Array.from(xml.matchAll(noteRegex)).map((match) => match[0]);
+}
+
+function renderNoteStrip(xml, container) {
+  if (!container) return [];
+  const notes = parseNoteBlocks(xml).filter((block) => !block.includes("<chord/>"));
+  container.innerHTML = notes
+    .map((block) => {
+      const stepMatch = block.match(new RegExp("<step>([A-G])<\\/step>"));
+      const alterMatch = block.match(new RegExp("<alter>(-?\\d+)<\\/alter>"));
+      const octaveMatch = block.match(new RegExp("<octave>(\\d+)<\\/octave>"));
+      if (!stepMatch || !octaveMatch) return "";
+      const step = stepMatch[1];
+      const alter = alterMatch ? Number(alterMatch[1]) : 0;
+      const octave = octaveMatch[1];
+      const accidental = alter === 1 ? "#" : alter === -1 ? "b" : "";
+      return `<span class="note-pill">${step}${accidental}${octave}</span>`;
+    })
+    .join("");
+  return Array.from(container.querySelectorAll(".note-pill"));
 }
 
 function noteFrequency(step, alter, octave) {
